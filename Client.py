@@ -10,6 +10,7 @@ import pickle
 
 from numpy.f2py.auxfuncs import show
 from sympy.plotting.series import ContourSeries
+from sympy.polys.benchmarks.bench_galoispolys import f_10
 
 from Communication import TcpBySize
 
@@ -75,6 +76,10 @@ lobby_lines = [
 
 default_font = "PressStart2P-Regular.ttf"
 
+error_codes = {
+    0 : "An Unexpected Error Occurred",
+    1 : "This Game Doesn't Exist"}
+
 IMAGES = {}
 
 class Window:
@@ -86,6 +91,7 @@ class Window:
         self.mouse_clicked = False
         self.mouse_pos = None
         self.comms = comms
+        self.font = pygame.font.SysFont("arial", 30, bold=True)
         self.methods = {
             "ERROR" : self.error
         }
@@ -110,6 +116,9 @@ class Window:
             self.img_buttons[name] = image
         else:
             self.buttons[name] = Button(ratios, func, args, hovered, False)
+
+    def remove_button(self, name):
+        del self.buttons[name]
 
     def refresh_buttons(self, screen_size: tuple):
         [button.refresh(screen_size) for button in self.buttons.values()]
@@ -148,9 +157,22 @@ class Window:
 
         return {"code" : "ERROR", "description" : "Server closed unexpectedly"}
 
-    @staticmethod
-    def error(data):
-        print("An error occurred")
+    def error(self, data):
+        if len(error_codes.keys()) < data["ERROR_CODE"]:
+            code = 0
+        else:
+            code = data["ERROR_CODE"]
+
+        text_surface = self.font.render(error_codes[code], True, (255, 0, 0))
+
+        top_padding = int(HEIGHT * 0.03)
+
+        text_rect = text_surface.get_rect(
+            center=(WIDTH // 2, top_padding + text_surface.get_height() // 2)
+        )
+
+        game_surface.blit(text_surface, text_rect)
+        Controls.scale()
 
 class LobbyWindow(Window):
     def __init__(self, background_picture, comms):
@@ -350,6 +372,7 @@ class ChatWindow(Window):
         }
 
         self.methods["CHAT_MSG"] = self.add_chat_message
+        self.methods["MSG_HISTORY_REQ"] = self.get_history
 
         self.input_box = pygame.Rect(
             self.measurements["text_box_x"] + 2,
@@ -587,6 +610,15 @@ class ChatWindow(Window):
                         hovered=PATHS["ContinueHovered"])
         self.show_img_buttons()
 
+        data = {
+            "code" : "GAME_OVER"
+        }
+        self.comms.send_with_size(pickle.dumps(data))
+
+    def get_history(self):
+        data = {"code" : "HISTORY_RES", "history" : self.msgs}
+        self.comms.send_with_size(pickle.dumps(data))
+
 class ChooseWindow(Window):
     def __init__(self, background_picture, comms, username):
         super().__init__(background_picture, comms)
@@ -822,6 +854,103 @@ class ScoreBoardWindow(Window):
                 if button.is_pressed(self.mouse_pos):
                     button.press()
                     break
+
+class WatchWindow(Window):
+    def __init__(self, background_picture, comms):
+        super().__init__(background_picture, comms)
+        self.rect_width = WIDTH // 2.1
+        self.rect_height = HEIGHT // 11
+
+        self.rect = pygame.Rect(0, 0, self.rect_width, self.rect_height)
+        self.text_font = pygame.font.Font(default_font, 80)
+
+        self.methods["ONGOING_RES"] = self.set_ongoing
+        self.ongoing = []
+        self.watching = []
+        self.page = 1
+
+        self.add_button("Home", (64, 54, 16, 13.5), ButtonClick.back_to_lobby, args=(LOBBY,),
+                        hovered=PATHS["HomeHovered"])
+        self.add_button("Left", (21.33, 3.54, 9.6, 2.16), func=self.show_4, args=(-1,), hovered=PATHS["LeftHovered"])
+        self.add_button("Right", (1.17, 3.72, 9.6, 2.16), func=self.show_4, args=(1,), hovered=PATHS["RightHovered"])
+        self.refresh_buttons(pygame.display.get_window_size())
+
+        data = pickle.dumps({"code" : "ONGOING_REQ"})
+        comms.send_with_size(data)
+
+    def set_ongoing(self, data):
+        self.ongoing = data["ongoing"]
+        self.watching = data["watching"]
+        self.show_4(0)
+
+    def show_4(self, page):
+        self.page += page
+
+        if self.page == 0:
+            self.page = 1
+            return
+
+        if len(self.ongoing) == 0:
+            fnt = pygame.font.Font(default_font, 200)
+            txt = "No Ongoing Games"
+            txt = fnt.render(txt, True, (255, 255, 255))
+
+            x, y = Controls.center((0, 0), txt.get_size(), pygame.display.get_window_size())
+            game_surface.blit(txt, (x, y))
+            Controls.scale()
+
+        if len(self.ongoing) < (self.page - 1) * 4:
+            self.page -= page
+            return
+
+        r = pygame.rect.Rect((WIDTH // 4.57, HEIGHT // 1.89), (WIDTH // 1.77942, HEIGHT // 2.2))
+        pygame.draw.rect(game_surface, (30, 35, 40), r)
+
+        x, y = Controls.center((WIDTH // 4.57, HEIGHT // 1.95), (self.rect_width, self.rect_height), (WIDTH // 1.77942, HEIGHT // 2.2 // 3))
+
+        self.rect.x , self.rect.y = x, y
+
+        for button in self.buttons:
+            if button.name.startswith("game"):
+                self.remove_button(button.name)
+
+        for i in range(4):
+            indx = i + (self.page - 1) * 4
+
+            if len(self.ongoing) != 0 and len(self.ongoing) < indx:
+                break
+
+            game = self.ongoing[indx]
+
+            spectators = self.watching[indx]
+
+            txt = f"Watching Live: {spectators}"
+
+            txt = self.text_font.render(txt, True, (0, 0, 0))
+
+            place = f"Game #{i + (self.page - 1) * 4}"
+            txt2 = self.text_font.render(place, True, (0, 0, 0))
+
+            x, y = Controls.center((self.rect.x, self.rect.y), txt.get_size(), (self.rect.width, self.rect.height))
+
+            pygame.draw.rect(game_surface, (60, 110, 180), self.rect)
+            self.add_button(f"game{indx}",
+                            (WIDTH // self.rect.x, HEIGHT // self.rect.y, WIDTH // self.rect.width, HEIGHT // self.rect.height),
+                            self.watch,
+                            args=(indx,),
+                            hovered=None
+                            )
+
+            game_surface.blit(txt, (x, y))
+            game_surface.blit(txt2, (self.rect.x, y))
+
+            self.rect.y += self.rect.height + HEIGHT // 48
+
+        Controls.scale()
+
+    def watch(self, indx):
+        data = {"code": "WATCH", "game" : self.ongoing[indx]}
+        self.comms.send_with_size(pickle.dumps(data))
 
     @override
     def extra_default_mechanics(self):

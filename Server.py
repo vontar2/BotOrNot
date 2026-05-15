@@ -62,6 +62,8 @@ WAITING_TIME = 2
 waiting = []
 ongoing = []
 
+watch_list = {}
+
 class Game:
     def __init__(self, player1, player2, start):
         self.players = [player1, player2]
@@ -94,13 +96,16 @@ class Client(threading.Thread):
             "GAME_MSG" : self.add_msg,
             "CHECK" : self.verdict,
             "SCORE_PLACEREQ" : self.get_score,
-            "SCOREBOARD_REQ" : self.get_scoreboard
+            "SCOREBOARD_REQ" : self.get_scoreboard,
+            "ONGOING_REQ" : self.get_ongoing,
+            "GAME_OVER" : self.game_over,
+            "WATCH" : self.add_to_watch_list,
+            "HISTORY_RES" : self.set_history
         }
         self.model = PreTrainedModel("microsoft/DialoGPT-medium")
 
         self.logged_in = False
         self.is_turn = False
-
 
     def run(self):
         self.sock.settimeout(0.01)
@@ -125,6 +130,14 @@ class Client(threading.Thread):
             if to_send:
                 self.comms.send_with_size(to_send)
 
+    def game_over(self, data):
+        game = [g for g in ongoing if self.sock in g.players]
+        if game:
+            ongoing.remove(game)
+
+        for spectator in watch_list[game][0]:
+            msg_manager.put_msg_by_user({"": {"code": "GAME_OVER"}}, spectator)
+
     def get_score(self, data):
         scoreboard = user_management.get_scoreboard()
 
@@ -142,6 +155,19 @@ class Client(threading.Thread):
 
         return to_send
 
+    def get_ongoing(self, data):
+        num_of_specs = [len(watch_list[game][0]) for game in ongoing]
+
+        return pickle.dumps({"code" : "ONGOING_RES", "ongoing": ongoing, "watching": num_of_specs})
+
+    def add_to_watch_list(self, data):
+        # TODO send history req with game id index to game.player1 wait til history's set send history to self.sock add self.sock to watch_list
+        pass
+
+    def set_history(self, data):
+        # TODO watch_list[game][1] = data["HISTORY"]
+        pass
+
     def send_msgs(self):
         messages: list[dict] = msg_manager.async_msgs[self.sock]
 
@@ -150,11 +176,13 @@ class Client(threading.Thread):
 
         for message in messages:
             data = list(message.values())[0]
-            print(data)
             sender = list(message.keys())[0]
 
             if data["code"] == "CHAT_MSG":
                 response = self.create_response("CHAT_MSG", None, {"sender": sender, "msg": data["data"]})
+                self.comms.send_with_size(response)
+            elif data["code"] == "GAME_OVER":
+                response = self.create_response("GAME_OVER", None, None)
                 self.comms.send_with_size(response)
 
         msg_manager.async_msgs[self.sock] = []
@@ -175,7 +203,7 @@ class Client(threading.Thread):
 
                     t = True if random.random() > 0.5 else False
 
-                    ongoing.append(Game(self.sock, match, t))
+                    Client.add_game(self.sock, match, t)
                     return pickle.dumps({"code" : "MATCHED", "turn" : t})
 
             while self.sock in waiting:
@@ -192,7 +220,7 @@ class Client(threading.Thread):
             self.is_turn = t
 
             with lock:
-                ongoing.append(Game(self.sock, self.model, t))
+                Client.add_game(self.sock, self.model, t)
 
         data = pickle.dumps({"code": "MATCHED", "turn" : self.is_turn})
         self.comms.send_with_size(data)
@@ -201,25 +229,36 @@ class Client(threading.Thread):
         if not self.is_turn and chatter == "AI":
             self.send_ai_msg(msg_manager.user_by_sock[self.sock], "Hi")
 
+    @staticmethod
+    def add_game(p1, p2, t):
+        game = Game(p1, p2, t)
+        ongoing.append(game)
+        watch_list[game] = ([], [])
 
     def add_msg(self, data: dict):
         username = data["username"]
         msg = data["msg"]
 
         to = None
+        game = None
 
-        for game in ongoing:
-            if game.player1 == self.sock:
-                if type(game.player2) == PreTrainedModel:
+        for g in ongoing:
+            if g.player1 == self.sock:
+                game = g
+                if type(g.player2) == PreTrainedModel:
                     self.send_ai_msg(username, msg)
                     return
 
                 else:
-                    to = game.u2
-            elif game.player2 == self.sock:
-                to = game.u1
+                    to = g.u2
+            elif g.player2 == self.sock:
+                game = g
+                to = g.u1
 
-        msg_manager.put_msg_by_user({username: {"code": "CHAT_MSG", "data": msg}}, to)
+        watching = watch_list[game].append(to)
+
+        for u in watching:
+            msg_manager.put_msg_by_user({username: {"code": "CHAT_MSG", "data": msg}}, u)
 
     def send_ai_msg(self, username, msg):
         text = self.model.generate_response(msg)
