@@ -161,12 +161,25 @@ class Client(threading.Thread):
         return pickle.dumps({"code" : "ONGOING_RES", "ongoing": ongoing, "watching": num_of_specs})
 
     def add_to_watch_list(self, data):
-        # TODO send history req with game id index to game.player1 wait til history's set send history to self.sock add self.sock to watch_list
-        pass
+        game = data["game"]
+        p1 = game.player1
+        msg_manager.put_msg_by_user({"": {"code": "MSG_HISTORY_REQ"}}, msg_manager.user_by_sock[p1])
+
+        while watch_list[game][1] is None:
+            with lock:
+                if watch_list[game][1]:
+                    watch_list[game][0].append(self.sock)
+                    to_send = {"code": "WATCH_START",
+                               "HISTORY" : watch_list[game][1]}
+                    watch_list[game][1] = None
+                    break
+
+        return pickle.dumps(to_send)
+
 
     def set_history(self, data):
-        # TODO watch_list[game][1] = data["HISTORY"]
-        pass
+        game = [g for g in ongoing if g.player1 == self.sock][0]
+        watch_list[game][1] = data["HISTORY"]
 
     def send_msgs(self):
         messages: list[dict] = msg_manager.async_msgs[self.sock]
@@ -183,6 +196,9 @@ class Client(threading.Thread):
                 self.comms.send_with_size(response)
             elif data["code"] == "GAME_OVER":
                 response = self.create_response("GAME_OVER", None, None)
+                self.comms.send_with_size(response)
+            elif data["code"] == "MSG_HISTORY_REQ":
+                response = self.create_response("MSG_HISTORY_REQ", None, None)
                 self.comms.send_with_size(response)
 
         msg_manager.async_msgs[self.sock] = []
@@ -233,7 +249,7 @@ class Client(threading.Thread):
     def add_game(p1, p2, t):
         game = Game(p1, p2, t)
         ongoing.append(game)
-        watch_list[game] = ([], [])
+        watch_list[game] = ([], None)
 
     def add_msg(self, data: dict):
         username = data["username"]

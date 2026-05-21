@@ -615,8 +615,10 @@ class ChatWindow(Window):
         }
         self.comms.send_with_size(pickle.dumps(data))
 
-    def get_history(self):
-        data = {"code" : "HISTORY_RES", "history" : self.msgs}
+    def get_history(self, data):
+        data = {
+            "code" : "HISTORY_RES", "history" : self.msgs
+        }
         self.comms.send_with_size(pickle.dumps(data))
 
 class ChooseWindow(Window):
@@ -857,6 +859,8 @@ class ScoreBoardWindow(Window):
 
 class WatchWindow(Window):
     def __init__(self, background_picture, comms):
+        # TODO add clicking events
+
         super().__init__(background_picture, comms)
         self.rect_width = WIDTH // 2.1
         self.rect_height = HEIGHT // 11
@@ -865,6 +869,7 @@ class WatchWindow(Window):
         self.text_font = pygame.font.Font(default_font, 80)
 
         self.methods["ONGOING_RES"] = self.set_ongoing
+        self.methods["WATCH_START"] = self.watch_start
         self.ongoing = []
         self.watching = []
         self.page = 1
@@ -951,6 +956,10 @@ class WatchWindow(Window):
     def watch(self, indx):
         data = {"code": "WATCH", "game" : self.ongoing[indx]}
         self.comms.send_with_size(pickle.dumps(data))
+
+    def watch_start(self, data):
+        history = data["HISTORY"]
+        # TODO create watching chat window
 
     @override
     def extra_default_mechanics(self):
