@@ -617,7 +617,7 @@ class ChatWindow(Window):
 
     def get_history(self, data):
         data = {
-            "code" : "HISTORY_RES", "history" : self.msgs
+            "code" : "HISTORY_RES", "history" : self.msgs, "time" : self.time
         }
         self.comms.send_with_size(pickle.dumps(data))
 
@@ -859,8 +859,6 @@ class ScoreBoardWindow(Window):
 
 class WatchWindow(Window):
     def __init__(self, background_picture, comms):
-        # TODO add clicking events
-
         super().__init__(background_picture, comms)
         self.rect_width = WIDTH // 2.1
         self.rect_height = HEIGHT // 11
@@ -882,6 +880,47 @@ class WatchWindow(Window):
 
         data = pickle.dumps({"code" : "ONGOING_REQ"})
         comms.send_with_size(data)
+
+    @override
+    def event_mouse_motion(self, event: pygame.event.Event):
+        pos = event.pos[0], event.pos[1]
+        for button in self.buttons.values():
+            if button.is_pressed(pos):
+                if button.hovered:
+                    if self.hovered:
+                        break
+
+                    cords = (0, 0)
+                    ratios = (1, 1)
+                    if button.is_img:
+                        cords = (WIDTH // button.ratios[0], HEIGHT // button.ratios[1])
+                        ratios = (button.ratios[2], button.ratios[3])
+
+                    Controls.display_image(button.hovered, cords, scale_ratio=ratios)
+                    self.show_scoreboard()
+                    self.hovered = True
+                    break
+        else:
+            if self.hovered:
+                self.hovered = False
+                Controls.display_image(PATHS["Scoreboard"], (0, 0))
+                self.show_scoreboard()
+
+    @override
+    def event_mouse_down(self, event: pygame.event.Event):
+        if event.button == 1:
+            self.mouse_clicked = True
+            self.mouse_pos = (event.pos[0], event.pos[1])
+
+    @override
+    def event_mouse_up(self, event: pygame.event.Event):
+        if self.mouse_clicked and event.button == 1:
+            self.mouse_clicked = False
+
+            for button in self.buttons.values():
+                if button.is_pressed(self.mouse_pos):
+                    button.press()
+                    break
 
     def set_ongoing(self, data):
         self.ongoing = data["ongoing"]
@@ -958,7 +997,8 @@ class WatchWindow(Window):
         self.comms.send_with_size(pickle.dumps(data))
 
     def watch_start(self, data):
-        history = data["HISTORY"]
+        history = data["HISTORY"][0]
+        g_time = data["HISTORY"][1]
         # TODO create watching chat window
 
     @override
@@ -967,6 +1007,194 @@ class WatchWindow(Window):
 
         if data:
             self.methods[data["code"]](data)
+
+class WatchChatWindow(Window):
+    def __init__(self, background_picture, comms, history, font_path, g_time):
+        global WIDTH, HEIGHT
+
+        super().__init__(background_picture, comms)
+        self.msgs = history
+        self.text_font = pygame.font.Font(font_path, 35)
+        self.timer_font = pygame.font.Font(font_path, 59)
+        self.counter = 0
+        self.time = g_time
+        self.hovered = False
+        self.measurements = {
+            "text_box_x": WIDTH // 3.31,
+            "text_box_y": HEIGHT // 1.08,
+            "text_box_w": WIDTH // 2.52,
+            "text_box_h": HEIGHT // 18,
+            "chat_y": HEIGHT // 18,
+            "chat_h": HEIGHT // 1.17
+        }
+
+        self.methods["CHAT_MSG"] = self.add_chat_message
+
+        self.input_box = pygame.Rect(
+            self.measurements["text_box_x"] + 2,
+            self.measurements["text_box_y"] + 2,
+            self.measurements["text_box_w"] - 4,
+            self.measurements["text_box_h"] - 4
+        )
+        self.chat_box = pygame.Rect(
+            self.measurements["text_box_x"] + 2,
+            self.measurements["chat_y"] + 2,
+            self.measurements["text_box_w"] - 4,
+            self.measurements["chat_h"] - 4
+        )
+        self.comms = comms
+
+        self.rects = {
+            "text_box_1": (pygame.Rect(
+                self.measurements["text_box_x"],
+                self.measurements["text_box_y"],
+                self.measurements["text_box_w"],
+                self.measurements["text_box_h"]
+            ), (0, 255, 200), 0),
+            "text_box_2": (pygame.Rect(
+                self.measurements["text_box_x"] + 2,
+                self.measurements["text_box_y"] + 2,
+                self.measurements["text_box_w"] - 4,
+                self.measurements["text_box_h"] - 4
+            ), (77, 91, 112), 0),
+            "chat_box_1": (pygame.Rect(
+                self.measurements["text_box_x"],
+                self.measurements["chat_y"],
+                self.measurements["text_box_w"],
+                self.measurements["chat_h"]
+            ), (0, 255, 200), 0),
+            "chat_box_2": (pygame.Rect(
+                self.measurements["text_box_x"] + 2,
+                self.measurements["chat_y"] + 2,
+                self.measurements["text_box_w"] - 4,
+                self.measurements["chat_h"] - 4
+            ), (39, 48, 61), 0),
+            "timer_1": (pygame.Rect(
+                WIDTH // 2 - HEIGHT // 7.71 - 2,
+                self.measurements["chat_y"] - HEIGHT // 54 - 2,
+                HEIGHT // 3.85 + 4,
+                self.measurements["text_box_h"] + 4
+            ), (0, 255, 200), 30),
+            "timer_2": (pygame.Rect(
+                WIDTH // 2 - HEIGHT // 7.71,
+                self.measurements["chat_y"] - HEIGHT // 54,
+                HEIGHT // 3.85,
+                self.measurements["text_box_h"]
+            ), (77, 91, 112), 30)
+        }
+
+        self.add_button("Home", (64, 54, 16, 13.5), ButtonClick.back_to_lobby, args=(LOBBY,),
+                        hovered=PATHS["HomeHovered"])
+        self.refresh_buttons(pygame.display.get_window_size())
+
+    @override
+    def event_mouse_motion(self, event: pygame.event.Event):
+        pos = event.pos[0], event.pos[1]
+        for button in self.buttons.values():
+            if button.is_pressed(pos):
+                if button.hovered:
+                    if self.hovered:
+                        break
+
+                    cords = (0, 0)
+                    ratios = (1, 1)
+                    if button.is_img:
+                        cords = (WIDTH // button.ratios[0], HEIGHT // button.ratios[1])
+                        ratios = (button.ratios[2], button.ratios[3])
+
+                    Controls.display_image(button.hovered, cords, scale_ratio=ratios)
+                    self.show_scoreboard()
+                    self.hovered = True
+                    break
+        else:
+            if self.hovered:
+                self.hovered = False
+                Controls.display_image(PATHS["Scoreboard"], (0, 0))
+                self.show_scoreboard()
+
+    @override
+    def event_mouse_down(self, event: pygame.event.Event):
+        if event.button == 1:
+            self.mouse_clicked = True
+            self.mouse_pos = (event.pos[0], event.pos[1])
+
+    @override
+    def event_mouse_up(self, event: pygame.event.Event):
+        if self.mouse_clicked and event.button == 1:
+            self.mouse_clicked = False
+
+            for button in self.buttons.values():
+                if button.is_pressed(self.mouse_pos):
+                    button.press()
+                    break
+
+    def add_message(self, text, color):
+        self.msgs[text] = color
+
+    @staticmethod
+    def seconds_to_minutes(seconds):
+        minutes, seconds = divmod(seconds, 60)
+        m = "0" + str(minutes) if minutes < 10 else str(minutes)
+        s = "0" + str(seconds) if seconds < 10 else str(seconds)
+
+        return f"{m}:{s}"
+
+    def add_chat_message(self, data):
+        global IS_TURN
+
+        IS_TURN = not IS_TURN
+        text = f"User:\n  {data["data"]["msg"]}"
+
+        color = (240, 50, 50) if IS_TURN else (71, 232, 65)
+
+        self.add_message(text, color)
+
+    def blit_clock(self, _time):
+        t = self.timer_font.render(ChatWindow.seconds_to_minutes(_time), True, (255, 255, 255))
+        game_surface.blit(t, (WIDTH // 2 - HEIGHT // 16.36, self.measurements["chat_y"] - HEIGHT // 54))
+
+    @override
+    def extra_default_mechanics(self):
+        data = super().extra_default_mechanics()
+
+        if data:
+            self.methods[data["code"]](data)
+
+        if self.time >= 0:
+            [pygame.draw.rect(game_surface, self.rects[rct][1], self.rects[rct][0], border_radius=self.rects[rct][2]) for rct in self.rects]
+
+            y = self.chat_box.bottom - 10
+
+            for msg, color in reversed(self.msgs.items()):
+                msg_surface = self.text_font.render(msg, True, color)
+                msg_height = msg_surface.get_height()
+
+                y -= msg_height + 5
+
+                if y < self.measurements["chat_y"]:
+                    break
+
+                game_surface.blit(msg_surface, (self.chat_box.x + 10, y))
+
+            pygame.draw.rect(game_surface, (255, 255, 255), self.input_box, 2)
+
+            text_surface = self.text_font.render(self.text[self.left:self.right], True, (255, 255, 255))
+
+            game_surface.blit(text_surface, (self.input_box.x + 10, self.input_box.y + 10))
+            self.blit_clock(self.time)
+
+            self.counter += 1
+
+            if self.counter == 60:
+                self.counter = 0
+                self.time -= 1
+
+            pygame.display.flip()
+
+            Controls.scale()
+            self.show_img_buttons()
+
+        pygame.display.flip()
 
 class Button:
     def __init__(self, ratios: tuple, func: Callable, args: tuple, hovered: str, is_img: bool):

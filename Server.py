@@ -179,7 +179,7 @@ class Client(threading.Thread):
 
     def set_history(self, data):
         game = [g for g in ongoing if g.player1 == self.sock][0]
-        watch_list[game][1] = data["HISTORY"]
+        watch_list[game][1] = (data["history"], data["time"])
 
     def send_msgs(self):
         messages: list[dict] = msg_manager.async_msgs[self.sock]
