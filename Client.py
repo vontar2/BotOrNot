@@ -153,6 +153,7 @@ class Window:
             print(traceback.format_exc())
 
         if data:
+            print(data["code"])
             return data
 
         return {"code" : "ERROR", "description" : "Server closed unexpectedly"}
@@ -194,7 +195,6 @@ class LobbyWindow(Window):
         self.show_score(self.score, self.placement)
         self.show_lobby_line()
 
-
     def show_lobby_line(self):
         global lobby_lines
 
@@ -211,7 +211,6 @@ class LobbyWindow(Window):
         game_surface.blit(line_surface, (x, y))
 
         Controls.scale()
-
 
     def show_score(self, score, placement):
         score_surface = self.text_font2.render(score, True, (227, 189, 18))
@@ -354,8 +353,8 @@ class ChatWindow(Window):
         self.msgs = {}
         self.left = 0
         self.right = 0
-        self.text_font = pygame.font.Font(font_path, 35)
-        self.timer_font = pygame.font.Font(font_path, 59)
+        self.text_font = pygame.font.Font(font_path, 21)
+        self.timer_font = pygame.font.Font(font_path, 50)
         self.time = 120
         self.counter = 0
         self.mouse_pos = None
@@ -569,7 +568,7 @@ class ChatWindow(Window):
 
     def blit_clock(self, _time):
         t = self.timer_font.render(ChatWindow.seconds_to_minutes(_time), True, (255, 255, 255))
-        game_surface.blit(t, (WIDTH // 2 - HEIGHT // 16.36, self.measurements["chat_y"] - HEIGHT // 54))
+        game_surface.blit(t, (WIDTH // 2 - t.get_width() // 2, self.measurements["chat_y"] - HEIGHT // 70))
 
     def start_game(self, data):
         Controls.enter_fullscreen(self)
@@ -857,6 +856,13 @@ class ScoreBoardWindow(Window):
                     button.press()
                     break
 
+    @override
+    def extra_default_mechanics(self):
+        data = super().extra_default_mechanics()
+
+        if data:
+            self.methods[data["code"]](data)
+
 class WatchWindow(Window):
     def __init__(self, background_picture, comms):
         super().__init__(background_picture, comms)
@@ -864,7 +870,7 @@ class WatchWindow(Window):
         self.rect_height = HEIGHT // 11
 
         self.rect = pygame.Rect(0, 0, self.rect_width, self.rect_height)
-        self.text_font = pygame.font.Font(default_font, 80)
+        self.text_font = pygame.font.Font(default_font, 50)
 
         self.methods["ONGOING_RES"] = self.set_ongoing
         self.methods["WATCH_START"] = self.watch_start
@@ -935,13 +941,15 @@ class WatchWindow(Window):
             return
 
         if len(self.ongoing) == 0:
-            fnt = pygame.font.Font(default_font, 200)
+            fnt = pygame.font.Font(default_font, 100)
             txt = "No Ongoing Games"
             txt = fnt.render(txt, True, (255, 255, 255))
 
             x, y = Controls.center((0, 0), txt.get_size(), pygame.display.get_window_size())
             game_surface.blit(txt, (x, y))
             Controls.scale()
+
+            return
 
         if len(self.ongoing) < (self.page - 1) * 4:
             self.page -= page
@@ -997,9 +1005,14 @@ class WatchWindow(Window):
         self.comms.send_with_size(pickle.dumps(data))
 
     def watch_start(self, data):
+        global current_window
+
         history = data["HISTORY"][0]
         g_time = data["HISTORY"][1]
         # TODO create watching chat window
+
+        watch_chat = WatchChatWindow(PATHS["ChatScreen"], self.comms, history, self.text_font, g_time)
+        current_window = watch_chat
 
     @override
     def extra_default_mechanics(self):
@@ -1267,9 +1280,11 @@ class ButtonClick:
         current_window = lobby
 
     @staticmethod
-    def watch():
+    def watch(comms):
         global current_window
-
+        watch_window = WatchWindow(PATHS["LoadingScreen"], comms)
+        watch_window.display()
+        current_window = watch_window
 
     @staticmethod
     def scoreboard(comms):
@@ -1306,7 +1321,7 @@ class Controls:
 
         lobby = LobbyWindow(PATHS["GameLobby"], comms)
         lobby.add_button("Play", (2.56, 1.44, 4.57, 9.39), ButtonClick.init_game, args=(loading, comms), hovered=PATHS["PlayHovered"])
-        lobby.add_button("Watch", (1.53, 1.37, 5.48, 12.7), ButtonClick.watch, hovered=PATHS["WatchHovered"])
+        lobby.add_button("Watch", (1.53, 1.37, 5.48, 12.7), ButtonClick.watch, args=(comms,), hovered=PATHS["WatchHovered"])
         lobby.add_button("Scoreboard", (7.24, 1.37, 4.74, 12.7), ButtonClick.scoreboard, args=(comms,), hovered=PATHS["ScoreboardHovered"])
 
         return lobby, loading, chat

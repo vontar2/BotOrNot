@@ -158,12 +158,19 @@ class Client(threading.Thread):
     def get_ongoing(self, data):
         num_of_specs = [len(watch_list[game][0]) for game in ongoing]
 
-        return pickle.dumps({"code" : "ONGOING_RES", "ongoing": ongoing, "watching": num_of_specs})
+        serializable_ongoing = ongoing.copy()
+        for game in serializable_ongoing:
+            game.player1 = msg_manager.user_by_sock[game.player1]
+
+            if type(game.player2) != PreTrainedModel:
+                game.player2 = msg_manager.user_by_sock[game.player2]
+
+        return pickle.dumps({"code" : "ONGOING_RES", "ongoing": serializable_ongoing, "watching": num_of_specs})
 
     def add_to_watch_list(self, data):
         game = data["game"]
         p1 = game.player1
-        msg_manager.put_msg_by_user({"": {"code": "MSG_HISTORY_REQ"}}, msg_manager.user_by_sock[p1])
+        msg_manager.put_msg_by_user({"": {"code": "MSG_HISTORY_REQ"}}, p1)
 
         while watch_list[game][1] is None:
             with lock:
