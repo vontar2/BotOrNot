@@ -242,10 +242,10 @@ class Client(threading.Thread):
         msg_manager.async_msgs[self.sock] = []
 
     def start_game(self, data: dict):
-        chatter = "Human"
+        chatter = "AI"
 
-        #if len(msg_manager.sock_by_user.items()) > 1:
-        #    chatter = "Human" if random.randint(0, 1) == 0 else "AI"
+        if len(msg_manager.sock_by_user.items()) > 1:
+            chatter = "Human" if random.randint(0, 1) == 0 else "AI"
 
         if chatter == "Human":
             with lock:

@@ -369,7 +369,7 @@ class ChatWindow(Window):
 
         super().__init__(background_picture, comms)
         self.text = ""
-        self.msgs = {}
+        self.msgs = []
         self.left = 0
         self.right = 0
         self.text_font = pygame.font.Font(font_path, 21)
@@ -542,7 +542,7 @@ class ChatWindow(Window):
                     break
 
     def add_message(self, text, color):
-        self.msgs[text] = color
+        self.msgs.append({text: color})
 
     @override
     def extra_default_mechanics(self):
@@ -556,7 +556,8 @@ class ChatWindow(Window):
 
             y = self.chat_box.bottom - 10
 
-            for msg, color in reversed(self.msgs.items()):
+            for m in reversed(self.msgs):
+                msg, color = next(iter(m.items()))
                 msg_surface = self.text_font.render(msg, True, color)
                 msg_height = msg_surface.get_height()
 
@@ -1182,7 +1183,7 @@ class WatchChatWindow(Window):
                     break
 
     def add_message(self, text, color):
-        self.msgs[text] = color
+        self.msgs.append({text: color})
 
     @staticmethod
     def seconds_to_minutes(seconds):
@@ -1218,7 +1219,8 @@ class WatchChatWindow(Window):
 
             y = self.chat_box.bottom - 10
 
-            for msg, color in reversed(self.msgs.items()):
+            for m in reversed(self.msgs):
+                msg, color = next(iter(m.items()))
                 msg_surface = self.text_font.render(msg, True, color)
                 msg_height = msg_surface.get_height()
 
