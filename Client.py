@@ -24,6 +24,7 @@ RESOLUTION = None
 game_surface = None
 current_window = None
 IS_TURN = True
+lock = threading.Lock()
 
 LOBBY = None
 CHAT = None
@@ -48,7 +49,8 @@ PATHS = {
     "Scoreboard" : r"LobbyPictures\ScoreBoardLobby.png",
     "HomeHovered" : r"LobbyPictures\HomeHovered.png",
     "RightHovered" : r"LobbyPictures\RightHovered.png",
-    "LeftHovered" : r"LobbyPictures\LeftHovered.png"
+    "LeftHovered" : r"LobbyPictures\LeftHovered.png",
+    "WatchLobby" : r"LobbyPictures\WatchLobby.png",
 }
 
 lobby_lines = [
@@ -81,6 +83,11 @@ error_codes = {
     1 : "This Game Doesn't Exist"}
 
 IMAGES = {}
+
+class WGame:
+    def __init__(self, p1, p2):
+        self.player1 = p1
+        self.player2 = p2
 
 class Window:
     def __init__(self, background_picture, comms):
@@ -156,7 +163,7 @@ class Window:
             print(data["code"])
             return data
 
-        return {"code" : "ERROR", "description" : "Server closed unexpectedly"}
+        return {"code" : "ERROR", "ERROR_CODE" : 0, "description" : "Server closed unexpectedly"}
 
     def error(self, data):
         if len(error_codes.keys()) < data["ERROR_CODE"]:
@@ -294,7 +301,8 @@ class LobbyWindow(Window):
         data = super().extra_default_mechanics()
 
         if data:
-            self.methods[data["code"]](data)
+            if data["code"] != "GAME_OVER":
+                self.methods[data["code"]](data)
 
 class LoadingWindow(Window):
     loading_images = [
@@ -312,6 +320,7 @@ class LoadingWindow(Window):
         super().__init__(background_picture, comms)
         global WIDTH, HEIGHT
         self.methods["MATCHED"] = self.start
+        self.methods["WATCH_START"] = self.watch_start
         self.chat_window = chat_window
 
         self.x = WIDTH / 2 - (WIDTH * 0.1) / 2
@@ -344,6 +353,16 @@ class LoadingWindow(Window):
         current_window = self.chat_window
         self.chat_window.start_game(data)
 
+    def watch_start(self, data):
+        global current_window
+
+        history = data["HISTORY"][0]
+        g_time = data["HISTORY"][1]
+
+        watch_chat = WatchChatWindow(PATHS["ChatScreen"], self.comms, history, default_font, g_time)
+        watch_chat.display()
+        current_window = watch_chat
+
 class ChatWindow(Window):
     def __init__(self, background_picture, font_path, comms: TcpBySize, username):
         global WIDTH, HEIGHT
@@ -355,7 +374,7 @@ class ChatWindow(Window):
         self.right = 0
         self.text_font = pygame.font.Font(font_path, 21)
         self.timer_font = pygame.font.Font(font_path, 50)
-        self.time = 120
+        self.time = 60
         self.counter = 0
         self.mouse_pos = None
         self.mouse_clicked = False
@@ -372,6 +391,7 @@ class ChatWindow(Window):
 
         self.methods["CHAT_MSG"] = self.add_chat_message
         self.methods["MSG_HISTORY_REQ"] = self.get_history
+        self.methods["GO_LOBBY"] = self.go_lobby
 
         self.input_box = pygame.Rect(
             self.measurements["text_box_x"] + 2,
@@ -426,6 +446,10 @@ class ChatWindow(Window):
             self.measurements["text_box_h"]
         ), (77, 91, 112), 30)
         }
+
+    def go_lobby(self, data):
+        global LOBBY
+        ButtonClick.back_to_lobby(LOBBY)
 
     @override
     def event_key_pressed(self, event: pygame.event.Event):
@@ -596,7 +620,7 @@ class ChatWindow(Window):
         self.add_message(text, (240, 50, 50))
 
     def reset_timer(self):
-        self.time = 120
+        self.time = 60
 
     def display_continue(self):
         choose = ChooseWindow(PATHS["Choose1"], self.comms, self.username)
@@ -612,6 +636,7 @@ class ChatWindow(Window):
         data = {
             "code" : "GAME_OVER"
         }
+        self.time = -1
         self.comms.send_with_size(pickle.dumps(data))
 
     def get_history(self, data):
@@ -730,7 +755,7 @@ class ScoreBoardWindow(Window):
         self.rect_height = HEIGHT // 11
 
         self.rect = pygame.Rect(0, 0, self.rect_width, self.rect_height)
-        self.text_font = pygame.font.Font(default_font, 80)
+        self.text_font = pygame.font.Font(default_font, 50)
 
         self.methods["SCOREBOARD_RES"] = self.show_scoreboard_from_server
         self.sb = []
@@ -782,7 +807,7 @@ class ScoreBoardWindow(Window):
         self.rect.x , self.rect.y = x, y
 
         for i in range(4):
-            txt = "Vacant" if len(self.sb) < 3 + i + (self.page - 1) * 4 else f"{self.sb[3 + i + (self.page - 1) * 4][0]} {self.sb[3 + i + (self.page - 1) * 4][1]}"
+            txt = "Vacant" if len(self.sb) <= 3 + i + (self.page - 1) * 4 else f"{self.sb[3 + i + (self.page - 1) * 4][0]} {self.sb[3 + i + (self.page - 1) * 4][1]}"
             txt = self.text_font.render(txt, True, (0, 0, 0))
 
             place = f"#{4 + i + (self.page - 1) * 4}"
@@ -870,10 +895,9 @@ class WatchWindow(Window):
         self.rect_height = HEIGHT // 11
 
         self.rect = pygame.Rect(0, 0, self.rect_width, self.rect_height)
-        self.text_font = pygame.font.Font(default_font, 50)
+        self.text_font = pygame.font.Font(default_font, 20)
 
         self.methods["ONGOING_RES"] = self.set_ongoing
-        self.methods["WATCH_START"] = self.watch_start
         self.ongoing = []
         self.watching = []
         self.page = 1
@@ -882,6 +906,8 @@ class WatchWindow(Window):
                         hovered=PATHS["HomeHovered"])
         self.add_button("Left", (21.33, 3.54, 9.6, 2.16), func=self.show_4, args=(-1,), hovered=PATHS["LeftHovered"])
         self.add_button("Right", (1.17, 3.72, 9.6, 2.16), func=self.show_4, args=(1,), hovered=PATHS["RightHovered"])
+        self.init_buttons()
+
         self.refresh_buttons(pygame.display.get_window_size())
 
         data = pickle.dumps({"code" : "ONGOING_REQ"})
@@ -890,7 +916,7 @@ class WatchWindow(Window):
     @override
     def event_mouse_motion(self, event: pygame.event.Event):
         pos = event.pos[0], event.pos[1]
-        for button in self.buttons.values():
+        for (name, button) in zip(self.buttons.keys(), self.buttons.values()):
             if button.is_pressed(pos):
                 if button.hovered:
                     if self.hovered:
@@ -903,14 +929,14 @@ class WatchWindow(Window):
                         ratios = (button.ratios[2], button.ratios[3])
 
                     Controls.display_image(button.hovered, cords, scale_ratio=ratios)
-                    self.show_scoreboard()
+                    self.show_4(0)
                     self.hovered = True
                     break
         else:
             if self.hovered:
                 self.hovered = False
-                Controls.display_image(PATHS["Scoreboard"], (0, 0))
-                self.show_scoreboard()
+                Controls.display_image(PATHS["WatchLobby"], (0, 0))
+                self.show_4(0)
 
     @override
     def event_mouse_down(self, event: pygame.event.Event):
@@ -933,6 +959,29 @@ class WatchWindow(Window):
         self.watching = data["watching"]
         self.show_4(0)
 
+    def init_buttons(self):
+        x, y = Controls.center((WIDTH // 4.57, HEIGHT // 1.95), (self.rect_width, self.rect_height),
+                               (WIDTH // 1.77942, HEIGHT // 2.2 // 3))
+        self.rect.x, self.rect.y = x, y
+
+        for i in range(4):
+            self.add_button(
+                f"game{i}",
+                ratios=(
+                    WIDTH / self.rect.x,
+                    HEIGHT / self.rect.y,
+                    WIDTH / self.rect.width,
+                    HEIGHT / self.rect.height,
+                ),
+                func=self.watch,
+                args=(i,),
+                hovered=None
+            )
+
+            self.rect.y = self.rect.y + self.rect.height + HEIGHT // 48
+            print(self.rect.y)
+
+
     def show_4(self, page):
         self.page += page
 
@@ -941,14 +990,13 @@ class WatchWindow(Window):
             return
 
         if len(self.ongoing) == 0:
-            fnt = pygame.font.Font(default_font, 100)
+            fnt = pygame.font.Font(default_font, 80)
             txt = "No Ongoing Games"
             txt = fnt.render(txt, True, (255, 255, 255))
 
             x, y = Controls.center((0, 0), txt.get_size(), pygame.display.get_window_size())
             game_surface.blit(txt, (x, y))
             Controls.scale()
-
             return
 
         if len(self.ongoing) < (self.page - 1) * 4:
@@ -962,14 +1010,10 @@ class WatchWindow(Window):
 
         self.rect.x , self.rect.y = x, y
 
-        for button in self.buttons:
-            if button.name.startswith("game"):
-                self.remove_button(button.name)
-
         for i in range(4):
             indx = i + (self.page - 1) * 4
 
-            if len(self.ongoing) != 0 and len(self.ongoing) < indx:
+            if len(self.ongoing) != 0 and indx >= len(self.ongoing):
                 break
 
             game = self.ongoing[indx]
@@ -986,12 +1030,6 @@ class WatchWindow(Window):
             x, y = Controls.center((self.rect.x, self.rect.y), txt.get_size(), (self.rect.width, self.rect.height))
 
             pygame.draw.rect(game_surface, (60, 110, 180), self.rect)
-            self.add_button(f"game{indx}",
-                            (WIDTH // self.rect.x, HEIGHT // self.rect.y, WIDTH // self.rect.width, HEIGHT // self.rect.height),
-                            self.watch,
-                            args=(indx,),
-                            hovered=None
-                            )
 
             game_surface.blit(txt, (x, y))
             game_surface.blit(txt2, (self.rect.x, y))
@@ -1001,18 +1039,16 @@ class WatchWindow(Window):
         Controls.scale()
 
     def watch(self, indx):
-        data = {"code": "WATCH", "game" : self.ongoing[indx]}
-        self.comms.send_with_size(pickle.dumps(data))
-
-    def watch_start(self, data):
         global current_window
 
-        history = data["HISTORY"][0]
-        g_time = data["HISTORY"][1]
-        # TODO create watching chat window
+        indx = indx + (self.page - 1) * 4
 
-        watch_chat = WatchChatWindow(PATHS["ChatScreen"], self.comms, history, self.text_font, g_time)
-        current_window = watch_chat
+        Controls.LOADING = True
+        current_window = LOADING
+        LOADING.display()
+
+        data = {"code": "WATCH", "game" : self.ongoing[indx]}
+        self.comms.send_with_size(pickle.dumps(data))
 
     @override
     def extra_default_mechanics(self):
@@ -1027,8 +1063,8 @@ class WatchChatWindow(Window):
 
         super().__init__(background_picture, comms)
         self.msgs = history
-        self.text_font = pygame.font.Font(font_path, 35)
-        self.timer_font = pygame.font.Font(font_path, 59)
+        self.text_font = pygame.font.Font(font_path, 21)
+        self.timer_font = pygame.font.Font(font_path, 50)
         self.counter = 0
         self.time = g_time
         self.hovered = False
@@ -1042,6 +1078,7 @@ class WatchChatWindow(Window):
         }
 
         self.methods["CHAT_MSG"] = self.add_chat_message
+        self.methods["GAME_OVER"] = self.return_to_lobby
 
         self.input_box = pygame.Rect(
             self.measurements["text_box_x"] + 2,
@@ -1099,6 +1136,9 @@ class WatchChatWindow(Window):
         self.add_button("Home", (64, 54, 16, 13.5), ButtonClick.back_to_lobby, args=(LOBBY,),
                         hovered=PATHS["HomeHovered"])
         self.refresh_buttons(pygame.display.get_window_size())
+
+    def return_to_lobby(self, data):
+        ButtonClick.back_to_lobby(LOBBY)
 
     @override
     def event_mouse_motion(self, event: pygame.event.Event):
@@ -1164,7 +1204,7 @@ class WatchChatWindow(Window):
 
     def blit_clock(self, _time):
         t = self.timer_font.render(ChatWindow.seconds_to_minutes(_time), True, (255, 255, 255))
-        game_surface.blit(t, (WIDTH // 2 - HEIGHT // 16.36, self.measurements["chat_y"] - HEIGHT // 54))
+        game_surface.blit(t, (WIDTH // 2 - t.get_width() // 2, self.measurements["chat_y"] - HEIGHT // 70))
 
     @override
     def extra_default_mechanics(self):
@@ -1190,10 +1230,6 @@ class WatchChatWindow(Window):
                 game_surface.blit(msg_surface, (self.chat_box.x + 10, y))
 
             pygame.draw.rect(game_surface, (255, 255, 255), self.input_box, 2)
-
-            text_surface = self.text_font.render(self.text[self.left:self.right], True, (255, 255, 255))
-
-            game_surface.blit(text_surface, (self.input_box.x + 10, self.input_box.y + 10))
             self.blit_clock(self.time)
 
             self.counter += 1
@@ -1282,7 +1318,7 @@ class ButtonClick:
     @staticmethod
     def watch(comms):
         global current_window
-        watch_window = WatchWindow(PATHS["LoadingScreen"], comms)
+        watch_window = WatchWindow(PATHS["WatchLobby"], comms)
         watch_window.display()
         current_window = watch_window
 
@@ -1301,7 +1337,7 @@ class Controls:
         global current_window, LOBBY, CHAT, LOADING
 
         Controls.load_images()
-        LOBBY, CHAT, LOADING = Controls.get_windows(comms, username)
+        LOBBY, LOADING, CHAT = Controls.get_windows(comms, username)
         current_window = LOBBY
         LOBBY.display()
 

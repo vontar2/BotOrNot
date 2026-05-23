@@ -19,6 +19,13 @@ comms = None
 decrypt_key = None
 
 # ---------------- Entry Window ----------------
+
+class WGame:
+    def __init__(self, p1, p2):
+        self.player1 = p1
+        self.player2 = p2
+
+
 class EntryWindow(QWidget):
     def __init__(self, sock):
         super().__init__()

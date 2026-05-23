@@ -61,8 +61,14 @@ keyboard_neighbors = {
 WAITING_TIME = 2
 waiting = []
 ongoing = []
+wongoing = []
 
 watch_list = {}
+
+class WGame:
+    def __init__(self, p1, p2):
+        self.player1 = p1
+        self.player2 = p2
 
 class Game:
     def __init__(self, player1, player2, start):
@@ -70,11 +76,14 @@ class Game:
 
         self.player1 = player1
         self.u1 = msg_manager.user_by_sock[self.player1]
+        self.u2 = None
+
+        if player2 != "PreTrainedModel":
+            self.u2 = msg_manager.user_by_sock[player2]
 
         self.player2 = player2
 
-        if type(player2) != PreTrainedModel:
-            self.u2 = msg_manager.user_by_sock[self.player2]
+        wongoing.append(WGame(self.u1, self.u2))
 
         self.start = start
 
@@ -83,6 +92,7 @@ class Client(threading.Thread):
         threading.Thread.__init__(self)
         self.sock = sock
         self.addr = addr
+        self.username = None
 
         key, iv = self.swap_key()
         self.comms = TcpBySize(sock, key, iv)
@@ -117,6 +127,9 @@ class Client(threading.Thread):
                 if self.logged_in:
                     self.send_msgs()
                 continue
+            except Exception as e:
+                print(traceback.format_exc())
+                self.unexpected_dc()
 
             if data["code"]:
                 print("code:", data["code"])
@@ -130,13 +143,28 @@ class Client(threading.Thread):
             if to_send:
                 self.comms.send_with_size(to_send)
 
-    def game_over(self, data):
-        game = [g for g in ongoing if self.sock in g.players]
+    def unexpected_dc(self):
+        game = None
+        send_to = None
+
+        for g in ongoing:
+            if g.u1 == self.username or g.u2 == self.username:
+                game = g
+                send_to = g.u1 if self.username == g.u2 else g.u2
+                break
+
         if game:
             ongoing.remove(game)
+            msg_manager.put_msg_by_user({"": {"code": "GO_LOBBY"}}, send_to)
 
-        for spectator in watch_list[game][0]:
-            msg_manager.put_msg_by_user({"": {"code": "GAME_OVER"}}, spectator)
+    def game_over(self, data):
+        game = [g for g in ongoing if self.username == g.u1 or self.username == g.u2]
+        wgame = [g for g in wongoing if self.username == g.player1 or self.username == g.player2]
+
+        with lock:
+            if game[0] in watch_list.keys():
+                for spectator in watch_list[game[0]][0]:
+                    msg_manager.put_msg_by_user({"": {"code": "GAME_OVER"}}, spectator)
 
     def get_score(self, data):
         scoreboard = user_management.get_scoreboard()
@@ -156,37 +184,37 @@ class Client(threading.Thread):
         return to_send
 
     def get_ongoing(self, data):
-        num_of_specs = [len(watch_list[game][0]) for game in ongoing]
-
-        serializable_ongoing = ongoing.copy()
-        for game in serializable_ongoing:
-            game.player1 = msg_manager.user_by_sock[game.player1]
-
-            if type(game.player2) != PreTrainedModel:
-                game.player2 = msg_manager.user_by_sock[game.player2]
-
-        return pickle.dumps({"code" : "ONGOING_RES", "ongoing": serializable_ongoing, "watching": num_of_specs})
+        with lock:
+            num_of_specs = [len(watch_list[game][0]) for game in ongoing]
+        data = pickle.dumps({"code" : "ONGOING_RES", "ongoing": wongoing, "watching": num_of_specs})
+        return data
 
     def add_to_watch_list(self, data):
-        game = data["game"]
-        p1 = game.player1
+        wgame = data["game"]
+        p1 = wgame.player1
+
+        game = [g for g in ongoing if g.u1 == p1][0]
+
         msg_manager.put_msg_by_user({"": {"code": "MSG_HISTORY_REQ"}}, p1)
 
-        while watch_list[game][1] is None:
+        while True:
             with lock:
-                if watch_list[game][1]:
-                    watch_list[game][0].append(self.sock)
-                    to_send = {"code": "WATCH_START",
-                               "HISTORY" : watch_list[game][1]}
-                    watch_list[game][1] = None
+                if watch_list[game][1] != [None, None]:
+                    watch_list[game][0].append(msg_manager.user_by_sock[self.sock])
+                    to_send = {
+                        "code": "WATCH_START",
+                        "HISTORY": watch_list[game][1]
+                    }
+                    watch_list[game][1] = [None, None]
                     break
+            time.sleep(0.05)
 
         return pickle.dumps(to_send)
 
-
     def set_history(self, data):
         game = [g for g in ongoing if g.player1 == self.sock][0]
-        watch_list[game][1] = (data["history"], data["time"])
+        with lock:
+            watch_list[game][1][0], watch_list[game][1][1] = data["history"], data["time"]
 
     def send_msgs(self):
         messages: list[dict] = msg_manager.async_msgs[self.sock]
@@ -207,15 +235,17 @@ class Client(threading.Thread):
             elif data["code"] == "MSG_HISTORY_REQ":
                 response = self.create_response("MSG_HISTORY_REQ", None, None)
                 self.comms.send_with_size(response)
+            elif data["code"] == "GO_LOBBY":
+                response = self.create_response("GO_LOBBY", None, None)
+                self.comms.send_with_size(response)
 
         msg_manager.async_msgs[self.sock] = []
 
     def start_game(self, data: dict):
-        chatter = "AI"
-        print(len(msg_manager.sock_by_user.items()))
+        chatter = "Human"
 
-        if len(msg_manager.sock_by_user.items()) > 1:
-            chatter = "Human" if random.randint(0, 1) == 0 else "AI"
+        #if len(msg_manager.sock_by_user.items()) > 1:
+        #    chatter = "Human" if random.randint(0, 1) == 0 else "AI"
 
         if chatter == "Human":
             with lock:
@@ -243,7 +273,7 @@ class Client(threading.Thread):
             self.is_turn = t
 
             with lock:
-                Client.add_game(self.sock, self.model, t)
+                Client.add_game(self.sock, "PreTrainedModel", t)
 
         data = pickle.dumps({"code": "MATCHED", "turn" : self.is_turn})
         self.comms.send_with_size(data)
@@ -256,7 +286,7 @@ class Client(threading.Thread):
     def add_game(p1, p2, t):
         game = Game(p1, p2, t)
         ongoing.append(game)
-        watch_list[game] = ([], None)
+        watch_list[game] = [[], [None, None]]
 
     def add_msg(self, data: dict):
         username = data["username"]
@@ -268,7 +298,7 @@ class Client(threading.Thread):
         for g in ongoing:
             if g.player1 == self.sock:
                 game = g
-                if type(g.player2) == PreTrainedModel:
+                if g.player2 == "PreTrainedModel":
                     self.send_ai_msg(username, msg)
                     return
 
@@ -278,18 +308,38 @@ class Client(threading.Thread):
                 game = g
                 to = g.u1
 
-        watching = watch_list[game].append(to)
+        watching = watch_list[game][0]
+
+        for u in watching:
+            if u:
+                msg_manager.put_msg_by_user({username: {"code": "CHAT_MSG", "data": msg}}, u)
+
+        msg_manager.put_msg_by_user({username: {"code": "CHAT_MSG", "data": msg}}, to)
+
+
+    def send_ai_msg(self, username, msg):
+        p1 = msg_manager.sock_by_user[username]
+        watching = []
+
+        for g in ongoing:
+            if g.player1 == p1:
+                with lock:
+                    watching = watch_list[g][0]
+                break
 
         for u in watching:
             msg_manager.put_msg_by_user({username: {"code": "CHAT_MSG", "data": msg}}, u)
 
-    def send_ai_msg(self, username, msg):
         text = self.model.generate_response(msg)
         print(text)
         text = Client.spice_up_text(text)
         for i in range(1, len(text)):
             if i % 45 == 0:
                 text = text[:i] + "\n  " + text[i:]
+
+        for u in watching:
+            msg_manager.put_msg_by_user({username: {"code": "CHAT_MSG", "data": text}}, u)
+
         msg_manager.put_msg_by_user({username: {"code": "CHAT_MSG", "data": text}}, username)
 
     @staticmethod
@@ -297,7 +347,7 @@ class Client(threading.Thread):
         for i, letter in enumerate(text):
             change = True if random.random() > 0.99 else False
             if change and letter.isalpha():
-                options = keyboard_neighbors[letter]
+                options = keyboard_neighbors[letter.lower()]
                 random.shuffle(options)
                 text = text[:i] + options[0] + text[i + 1:]
 
@@ -323,12 +373,22 @@ class Client(threading.Thread):
 
         for game in ongoing:
             if self.sock in game.players:
+                with lock:
+                    if game in watch_list:
+                        del watch_list[game]
+
                 if data["option"] == "Bot":
-                    if type(game.player2) == PreTrainedModel:
+                    if game.player2 == "PreTrainedModel":
                         verdict = True
+
                 elif data["option"] == "Human":
-                    if type(game.player1) == socket.socket and type(game.player2) == socket.socket:
+                    if (type(game.player1) == socket.socket or game.player1 is None) and (type(game.player2) == socket.socket or game.player2 is None):
                         verdict = True
+
+                if game.player1 == self.sock:
+                    game.player1 = None
+                else:
+                    game.player2 = None
 
         if verdict:
             user = [u for u in user_management.users if u.username == msg_manager.user_by_sock[self.sock]][0]
@@ -339,6 +399,14 @@ class Client(threading.Thread):
             with open("users.pkl", "wb") as f:
                 pickle.dump(user_management.users, f)
 
+
+        game = [g for g in ongoing if self.username == g.u1 or self.username == g.u2]
+        wgame = [g for g in wongoing if self.username == g.player1 or self.username == g.player2]
+
+        if game:
+            if (game[0].player1 is None and game[0].player2 is None) or (game[0].player1 is None and game[0].player2 == "PreTrainedModel"):
+                ongoing.remove(game[0])
+                wongoing.remove(wgame[0])
 
         return pickle.dumps({"code": "VERDICT", "verdict": verdict})
 
@@ -353,6 +421,7 @@ class Client(threading.Thread):
                 msg_manager.sock_by_user[username] = self.sock
                 msg_manager.user_by_sock[self.sock] = username
                 user_by_email[email] = username
+                self.username = username
                 self.logged_in = True
                 return self.create_response("LOGINS", None, None)
             return self.create_response("LOGINF", "Login Failed", None)
