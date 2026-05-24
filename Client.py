@@ -51,6 +51,7 @@ PATHS = {
     "RightHovered" : r"LobbyPictures\RightHovered.png",
     "LeftHovered" : r"LobbyPictures\LeftHovered.png",
     "WatchLobby" : r"LobbyPictures\WatchLobby.png",
+    "WatchRoom" : r"ChatPictures2\Watch.png",
 }
 
 lobby_lines = [
@@ -80,7 +81,9 @@ default_font = "PressStart2P-Regular.ttf"
 
 error_codes = {
     0 : "An Unexpected Error Occurred",
-    1 : "This Game Doesn't Exist"}
+    1 : "This Game Doesn't Exist",
+    2 : "Player 2 Left Unexpectedly",
+    3 : "Unknown Error Occurred"}
 
 IMAGES = {}
 
@@ -163,13 +166,19 @@ class Window:
             print(data["code"])
             return data
 
-        return {"code" : "ERROR", "ERROR_CODE" : 0, "description" : "Server closed unexpectedly"}
+        return {"code" : "ERROR", "data" : {"ERROR_CODE" : 0}, "error_description" : "Server closed unexpectedly"}
 
     def error(self, data):
-        if len(error_codes.keys()) < data["ERROR_CODE"]:
-            code = 0
+        global current_window
+        current_window = LOBBY
+        current_window.display()
+
+        print(data)
+
+        if len(error_codes.keys()) < data["data"]["ERROR_CODE"]:
+            code = 3
         else:
-            code = data["ERROR_CODE"]
+            code = data["data"]["ERROR_CODE"]
 
         text_surface = self.font.render(error_codes[code], True, (255, 0, 0))
 
@@ -181,6 +190,8 @@ class Window:
 
         game_surface.blit(text_surface, text_rect)
         Controls.scale()
+
+        time.sleep(3)
 
 class LobbyWindow(Window):
     def __init__(self, background_picture, comms):
@@ -359,7 +370,7 @@ class LoadingWindow(Window):
         history = data["HISTORY"][0]
         g_time = data["HISTORY"][1]
 
-        watch_chat = WatchChatWindow(PATHS["ChatScreen"], self.comms, history, default_font, g_time)
+        watch_chat = WatchChatWindow(PATHS["WatchRoom"], self.comms, history, default_font, g_time)
         watch_chat.display()
         current_window = watch_chat
 
@@ -1157,14 +1168,12 @@ class WatchChatWindow(Window):
                         ratios = (button.ratios[2], button.ratios[3])
 
                     Controls.display_image(button.hovered, cords, scale_ratio=ratios)
-                    self.show_scoreboard()
                     self.hovered = True
                     break
         else:
             if self.hovered:
                 self.hovered = False
-                Controls.display_image(PATHS["Scoreboard"], (0, 0))
-                self.show_scoreboard()
+                Controls.display_image(PATHS["WatchRoom"], (0, 0))
 
     @override
     def event_mouse_down(self, event: pygame.event.Event):

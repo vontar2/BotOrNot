@@ -44,6 +44,9 @@ class HandleUsers:
 
         return True
 
+    def is_online(self, username):
+        return username in [u.username for u in self.users]
+
     def is_part_exist(self, username, email):
         if username in [u.username for u in self.users]:
             return True

@@ -70,6 +70,12 @@ class WGame:
         self.player1 = p1
         self.player2 = p2
 
+    def __eq__(self, other):
+        if not isinstance(other, WGame):
+            return False
+
+        return self.player1 == other.player1 and self.player2 == other.player2
+
 class Game:
     def __init__(self, player1, player2, start):
         self.players = [player1, player2]
@@ -138,6 +144,10 @@ class Client(threading.Thread):
                 print("closing socket")
                 self.sock.close()
                 print(data)
+                for u in user_management.users:
+                    if u.username == self.username:
+                        user_management.users.remove(u)
+                        break
                 return
 
             if to_send:
@@ -147,15 +157,33 @@ class Client(threading.Thread):
         game = None
         send_to = None
 
-        for g in ongoing:
-            if g.u1 == self.username or g.u2 == self.username:
-                game = g
-                send_to = g.u1 if self.username == g.u2 else g.u2
+        with lock:
+            for g in ongoing:
+                if g.u1 == self.username or g.u2 == self.username:
+                    game = g
+                    send_to = g.u1 if self.username == g.u2 else g.u2
+                    break
+
+            wgame = [g for g in wongoing if self.username == g.player1 or self.username == g.player2]
+
+            if game:
+                ongoing.remove(game)
+                wongoing.remove(wgame[0])
+                msg_manager.put_msg_by_user({"": {"code": "ERROR", "ERROR_CODE" : 2}}, send_to)
+
+                for spec in watch_list[game][0]:
+                    msg_manager.put_msg_by_user({"": {"code": "ERROR", "ERROR_CODE": 2}}, spec)
+
+                del watch_list[game]
+
+        print("closing socket")
+
+        for u in user_management.users:
+            if u.username == self.username:
+                user_management.users.remove(u)
                 break
 
-        if game:
-            ongoing.remove(game)
-            msg_manager.put_msg_by_user({"": {"code": "GO_LOBBY"}}, send_to)
+        self.sock.close()
 
     def game_over(self, data):
         game = [g for g in ongoing if self.username == g.u1 or self.username == g.u2]
@@ -191,6 +219,14 @@ class Client(threading.Thread):
 
     def add_to_watch_list(self, data):
         wgame = data["game"]
+
+        for wg in wongoing:
+            if wg == wgame:
+                break
+        else:
+            msg_manager.put_msg_by_user({"": {"code": "ERROR", "ERROR_CODE": 1}}, self.username)
+            return
+
         p1 = wgame.player1
 
         game = [g for g in ongoing if g.u1 == p1][0]
@@ -214,7 +250,8 @@ class Client(threading.Thread):
     def set_history(self, data):
         game = [g for g in ongoing if g.player1 == self.sock][0]
         with lock:
-            watch_list[game][1][0], watch_list[game][1][1] = data["history"], data["time"]
+            if game:
+                watch_list[game][1][0], watch_list[game][1][1] = data["history"], data["time"]
 
     def send_msgs(self):
         messages: list[dict] = msg_manager.async_msgs[self.sock]
@@ -235,17 +272,20 @@ class Client(threading.Thread):
             elif data["code"] == "MSG_HISTORY_REQ":
                 response = self.create_response("MSG_HISTORY_REQ", None, None)
                 self.comms.send_with_size(response)
-            elif data["code"] == "GO_LOBBY":
-                response = self.create_response("GO_LOBBY", None, None)
+            elif data["code"] == "ERROR":
+                response = self.create_response("ERROR", None, {"ERROR_CODE" : data["ERROR_CODE"]})
                 self.comms.send_with_size(response)
 
         msg_manager.async_msgs[self.sock] = []
 
     def start_game(self, data: dict):
-        chatter = "AI"
+        if not user_management.is_online(self.username):
+            return
 
-        if len(msg_manager.sock_by_user.items()) > 1:
-            chatter = "Human" if random.randint(0, 1) == 0 else "AI"
+        chatter = "Human"
+
+        #if len(msg_manager.sock_by_user.items()) > 1:
+        #    chatter = "Human" if random.randint(0, 1) == 0 else "AI"
 
         if chatter == "Human":
             with lock:
@@ -315,7 +355,6 @@ class Client(threading.Thread):
                 msg_manager.put_msg_by_user({username: {"code": "CHAT_MSG", "data": msg}}, u)
 
         msg_manager.put_msg_by_user({username: {"code": "CHAT_MSG", "data": msg}}, to)
-
 
     def send_ai_msg(self, username, msg):
         p1 = msg_manager.sock_by_user[username]
