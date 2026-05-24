@@ -116,7 +116,8 @@ class Client(threading.Thread):
             "ONGOING_REQ" : self.get_ongoing,
             "GAME_OVER" : self.game_over,
             "WATCH" : self.add_to_watch_list,
-            "HISTORY_RES" : self.set_history
+            "HISTORY_RES" : self.set_history,
+            "GOING_TO_LOBBY" : self.remove_from_watch
         }
         self.model = PreTrainedModel("microsoft/DialoGPT-medium")
 
@@ -148,10 +149,19 @@ class Client(threading.Thread):
                     if u.username == self.username:
                         user_management.users.remove(u)
                         break
+
+                self.remove_user(self.username)
+
                 return
 
             if to_send:
                 self.comms.send_with_size(to_send)
+
+    def remove_from_watch(self, data):
+        for watch in watch_list.values():
+            if self.username in watch[0]:
+                watch[0].remove(self.username)
+                print("removed", self.username)
 
     def unexpected_dc(self):
         game = None
@@ -183,7 +193,17 @@ class Client(threading.Thread):
                 user_management.users.remove(u)
                 break
 
+        self.remove_user(self.username)
+
         self.sock.close()
+
+    def remove_user(self, username):
+        msg_manager.async_msgs.pop(username, None)
+
+        sock = msg_manager.sock_by_user.pop(username, None)
+
+        if sock is not None:
+            msg_manager.user_by_sock.pop(sock, None)
 
     def game_over(self, data):
         game = [g for g in ongoing if self.username == g.u1 or self.username == g.u2]
@@ -282,7 +302,7 @@ class Client(threading.Thread):
         if not user_management.is_online(self.username):
             return
 
-        chatter = "Human"
+        chatter = "AI"
 
         #if len(msg_manager.sock_by_user.items()) > 1:
         #    chatter = "Human" if random.randint(0, 1) == 0 else "AI"

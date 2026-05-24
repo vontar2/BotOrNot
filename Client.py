@@ -1145,11 +1145,18 @@ class WatchChatWindow(Window):
             ), (77, 91, 112), 30)
         }
 
-        self.add_button("Home", (64, 54, 16, 13.5), ButtonClick.back_to_lobby, args=(LOBBY,),
+        self.add_button("Home", (64, 54, 16, 13.5), self.leave_watch,
                         hovered=PATHS["HomeHovered"])
         self.refresh_buttons(pygame.display.get_window_size())
 
     def return_to_lobby(self, data):
+        ButtonClick.back_to_lobby(LOBBY)
+
+    def leave_watch(self):
+        data = {"code" : "GOING_TO_LOBBY"}
+        self.comms.send_with_size(pickle.dumps(data))
+        print("sent", data)
+
         ButtonClick.back_to_lobby(LOBBY)
 
     @override
